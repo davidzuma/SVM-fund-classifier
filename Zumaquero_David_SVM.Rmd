@@ -1,0 +1,210 @@
+---
+title: "Zumaquero_David_SVM"
+author: "David Zumaquero"
+date: "5/7/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##  Crowdfunding Success
+Una start-up, puede buscar financiación de diferentes formas, una de las más comunes es el Crowdfunding, que es la busqueda de fondos a través de diferentes fuentes. 
+
+
+Para ello, inversores y empresas involucrados en la inversión, intentan predecir, utilizando una serie de variables, si la ronda de financiación será cerrada (obtienen financiación o no). 
+
+Este trabajo consiste en la obtención de un modelo de predicción SVM sobre el conjunto de datos 'crowdfunding_success.csv', que sea capaz de predecir si la ronda de financiación se cerrará con éxito.
+
+
+Primero importamos las librerias que vamos a utilizar
+```{r}
+library(readr)
+library (e1071)
+library(caTools)
+```
+
+Leemos los datos y para simplificar el problema, eliminamos las columnas con variables categóricas.
+```{r}
+data <- read_csv('crowdfunding_success.csv',  col_types = cols(class = col_factor(levels = c('0','1'))))
+data$funded <- factor(data$funded,levels = c('0','1'),labels=c('-1','1'))
+borrar <- c('...1','company_ID','offering_type','sector')
+datos <- data[ , !(names(data) %in% borrar)]
+
+print('Filas y columnas:')
+dim(datos)
+print('Nombre de las columnas:')
+names(datos)
+print('descripción de los datos:')
+summary(datos)
+
+
+```
+Nuestra base de datos tiene 120 filas y 6 columnas (eran 10 columnas pero, hemos quitado las categóricas).
+
+Nos hemos quedado solo con las variables numéricas, que son:
+
+- "number_of_contributors"  -> El número de contribuidores.
+- "funding_goal" -> El objetivo de financiación.
+- "minimum_investment_amount"-> La cantidad mínima de financiación.
+- "price_per_share" -> El precio por acción.
+- "valuation"  -> El valor de la empresa.
+- "funded"    -> Es el objetivo a predecir del modelo, es 1 cierra la ronda y -1 si no.
+
+También podemos ver que los datos no están escalados ni normalizados, pero sí que las clases están balanceadas. Antes de entrenar nuestro modelo vamos a preprocesar nuestros datos.
+
+Primero, dividiremos nuetros datos en train y test, 80% train y 20% test, para luego ver si nuestro modelo funciona bien con datos que nunca ha visto. Aplicaremos el mismo procesamiento de datos tanto a train como a test.
+
+En nuestra base de datos no tenemos valores nulos, luego no tenemos que imputarlos. Escalamos y normalizams nuestras variables de entrada pero no nuestra variable objetivo.
+
+```{r}
+
+
+set.seed(1)
+
+split = sample.split(data$funded, SplitRatio = 0.8)
+X_train = subset(datos, split==TRUE)
+X_test = subset(datos, split==FALSE)
+
+
+center = colMeans(X_train[,1:5])
+scale = sqrt(diag(var(X_train[,1:5])))
+
+X_train[,1:5] <- scale(X_train[,1:5])
+X_test[,1:5] <- scale(X_test[,1:5], center=center,scale=scale)
+
+```
+Vamos a entrenar nuestro modelo de SVM, para ello primero veremos qué parámentro debemos coger, mediante un tuneo de lo hiperparámetros del modelo y una validación cruzada. Este proceso lo haremos probando distintos tipos kernel. 
+
+Empezemos con el kernel más simple, el lineal.
+```{r}
+tune.out=tune(svm ,funded~.,data=X_train ,kernel ="linear", ranges =list(cost=c(0.01, 0.1, 1,5,10,100), tunecontrol=tune.control(cross=3)))
+summary(tune.out)
+bestmod =tune.out$best.model
+summary (bestmod)
+
+```
+Vemos que usando un kernel lineal y el coste 100, es el mejor de los candidatos propuestos.
+
+
+```{r}
+pred = predict(bestmod, X_test)
+
+T2=table(bestmod$fitted , X_train$funded)
+print(sprintf("Accuracy Train: %.2f%%\n",100*(sum(diag(T2))/sum(T2))))
+
+T3=table(pred , X_test$funded)
+
+print(sprintf("Accuracy Test: %.2f%%\n",100*(sum(diag(T3))/sum(T3))))
+print(sprintf("Pression Test: %.2f%%\n",100*(T3[2,2]/(T3[1,2]+T3[2,2]))))
+print(sprintf("Recall Test: %.2f%%\n",100*(T3[2,2]/(T3[2,1]+T3[2,2]))))
+
+```
+
+Probemos ahora con kernels no lineales: Kernel polinomial.
+No imprimiremos por pantalla la descripción del tuneo de los datos para no cargar el pdf de salida con mucha información
+```{r}
+tune.out.pol=tune(svm , funded~.,data=X_train ,kernel ="polynomial", ranges = list(cost=
+c(0.01, 0.1 ,1 ,5 ,50 ,100),degree=c(2,3,4,5) ), 
+tunecontrol=tune.control(cross=3), scale=TRUE)
+bestmodpol =tune.out.pol$best.model
+summary (bestmodpol)
+
+
+```
+
+```{r}
+pred = predict(bestmodpol, X_test)
+
+T4=table(bestmodpol$fitted , X_train$funded)
+print(sprintf("Accuracy Train: %.2f%%\n",100*(sum(diag(T4))/sum(T4))))
+
+T5=table(pred , X_test$funded)
+
+print(sprintf("Accuracy Test: %.2f%%\n",100*(sum(diag(T5))/sum(T5))))
+print(sprintf("Pression Test: %.2f%%\n",100*(T5[2,2]/(T5[1,2]+T5[2,2]))))
+print(sprintf("Recall Test: %.2f%%\n",100*(T5[2,2]/(T5[2,1]+T5[2,2]))))
+
+```
+
+Parece que hemos mejorado los resultados usando un kernel polinomial con grado 3 y coste 100. Probemos ahora usando de kernel la sigmoide.
+
+
+```{r}
+tune.out.sig=tune(svm ,funded~.,data=X_train ,kernel ="sigmoid", 
+ranges =list(cost=c(0.1, 1,5,10,100),degree = c(1,2, 3, 4, 5),
+tunecontrol=tune.control(cross=3)))
+bestmodsig =tune.out.sig$best.model
+summary (bestmodsig)
+
+```
+
+```{r}
+pred = predict(bestmodsig, X_test)
+
+T6=table(bestmodsig$fitted , X_train$funded)
+print(sprintf("Accuracy Train: %.2f%%\n",100*(sum(diag(T6))/sum(T6))))
+
+T7=table(pred , X_test$funded)
+
+print(sprintf("Accuracy Test: %.2f%%\n",100*(sum(diag(T7))/sum(T7))))
+print(sprintf("Pression Test: %.2f%%\n",100*(T7[2,2]/(T7[1,2]+T7[2,2]))))
+print(sprintf("Recall Test: %.2f%%\n",100*(T7[2,2]/(T7[2,1]+T7[2,2]))))
+
+```
+
+
+Parece que no hemos mejorado los resultados con el kernel sigmoide, por último probemos con el radial.
+```{r}
+tune.out.rad=tune(svm ,funded~.,data=X_train ,kernel ="radial", 
+ranges =list(cost=c( 0.1, 1,5,10,100), gamma=c(0.5,1,5,10),
+tunecontrol=tune.control(cross=3)))
+bestmodrad =tune.out.rad$best.model
+summary (bestmodrad)
+
+```
+
+
+```{r}
+pred = predict(bestmodrad, X_test)
+
+T8=table(bestmodrad$fitted , X_train$funded)
+print(sprintf("Accuracy Train: %.2f%%\n",100*(sum(diag(T8))/sum(T8))))
+
+T9=table(pred , X_test$funded)
+
+print(sprintf("Accuracy Test: %.2f%%\n",100*(sum(diag(T9))/sum(T9))))
+print(sprintf("Pression Test: %.2f%%\n",100*(T9[2,2]/(T9[1,2]+T9[2,2]))))
+print(sprintf("Recall Test: %.2f%%\n",100*(T9[2,2]/(T9[2,1]+T9[2,2]))))
+
+```
+
+Este resultado tampoco mejora al modelo polinomial. 
+
+El modelo que mejor actuación tiene es el polinomial de grado 3 y costes 100. Este será nuestro candidato.
+
+Los resultados son buenos pero parece que el modelo tiene un poco de overfitting. Veamos si podemos reducir la complejidad del modelo para que tenga mejor actuación en test.
+
+```{r}
+
+tune.out.pol.f=tune(svm , funded~.,data=X_train ,kernel ="polynomial",
+ranges = list(cost=c(1,5, 25,50,75),degree=2),
+tunecontrol=tune.control(cross=3), scale=TRUE)
+bestmodpolf =tune.out.pol.f$best.model
+pred = predict(bestmodpolf, X_test)
+# T1=table(pred, X_test$quality)
+
+T=table(bestmodpolf$fitted , X_train$funded)
+print(sprintf("Accuracy Train: %.2f%%\n",100*(sum(diag(T2))/sum(T2))))
+
+T1=table(pred , X_test$funded)
+print(sprintf("Accuracy Test: %.2f%%\n",100*(sum(diag(T1))/sum(T1))))
+print(sprintf("Pression Test: %.2f%%\n",100*(T1[2,2]/(T1[1,2]+T1[2,2]))))
+print(sprintf("Recall Test: %.2f%%\n",100*(T1[2,2]/(T1[2,1]+T1[2,2]))))
+
+
+```
+
+Probando con otros costes <100 y  grado <=3, no hemos conseguido mejorar la actuación del modelo, luego nuestro modelo final, será SVM con kernerl polinomial de grado 3 y coste 100. Podemos considerar que la actuación de nuestro modelo es bastante aceptable. Además, tiene una sensibilidad baja tanto para los falsos positivos como para los falsos negativos. Es la misma sensibilidad, esto se deduce facilmente de los resultados de pression y recall obtenidos.
+
